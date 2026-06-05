@@ -1,54 +1,152 @@
 # src/main.py
-
 from agents.weather_agent import WeatherAgent
 from agents.soil_agent import SoilAgent
 from agents.planner_agent import PlannerAgent
-from agents.llm_coordinator import LLMCoordinator
-from utils.data_loader import load_graz_frost_dataset
+from agents.llm_orchestrator import LLMOrchestrator
+
+import joblib
+import json
+
+
+# ------------------------------------------
+# DEMO CONFIGURATION
+# ------------------------------------------
+
+DEMO_MODE = "frost"
+# DEMO_MODE = "recent"
+
+
+def print_section(title):
+
+    print("\n" + "-" * 60)
+    print(title)
+    print("-" * 60)
+
+
+def load_demo_sample():
+
+    if DEMO_MODE == "frost":
+
+        print("\nRunning Historical Frost Scenario")
+
+        return joblib.load(
+            "models/sample_row_frost.pkl"
+        )
+
+    elif DEMO_MODE == "recent":
+
+        print("\nRunning Latest Available Observations")
+
+        return joblib.load(
+            "models/sample_row_recent.pkl"
+        )
+
+    else:
+
+        raise ValueError(
+            f"Unknown DEMO_MODE: {DEMO_MODE}"
+        )
 
 
 def main():
-    dataset = load_graz_frost_dataset("data/raw/graz_tmin.txt")
 
-    print("\n=== Multi-Agent Frost System (1-Day Ahead Forecast) ===\n")
+    print("\n" + "=" * 60)
+    print("MULTI-AGENT FROST PREDICTION SYSTEM")
+    print("=" * 60)
 
-    print("Dataset statistics:")
-    print("Total samples:", len(dataset))
-    print("Date range:", dataset["DATE"].min().date(),
-          "to", dataset["DATE"].max().date())
-    print("Frost days (target):", dataset["target_frost"].sum())
-    print("Non-frost days:", len(dataset) - dataset["target_frost"].sum())
-    print()
+    # Load demonstration sample
 
-    weather_agent = WeatherAgent(dataset)
+    sample_weather_data = load_demo_sample()
+
+    # Init the agents
+
+    weather_agent = WeatherAgent()
+
     soil_agent = SoilAgent()
+
     planner_agent = PlannerAgent()
-    llm = LLMCoordinator()
 
-    # Example: simulate today's minimum temperature
-    temperature_today = -2.0
-    soil_temperature = 2.0
-    soil_moisture = 0.6
-
-    weather_result = weather_agent.predict_frost(temperature_today)
-    soil_result = soil_agent.assess_vulnerability(
-        soil_temperature,
-        soil_moisture
+    llm_orchestrator = LLMOrchestrator(
+        model_name="llama3:latest"
     )
 
-    planner_result = planner_agent.decide_action(
-        weather_result["frost_probability"],
-        soil_result["vulnerability_score"]
+    # --------------------------------------
+    # Weather Agent
+    # --------------------------------------
+
+    weather_output = weather_agent.predict(
+        sample_weather_data
     )
 
-    summary = llm.generate_summary(
-        weather_result,
-        soil_result,
-        planner_result
+    print_section(
+        "Weather Agent Assessment"
     )
 
-    print("=== System Decision ===")
-    print(summary)
+    print(
+        json.dumps(
+            weather_output,
+            indent=2
+        )
+    )
+
+    # --------------------------------------
+    # Soil Agent
+    # --------------------------------------
+
+    soil_output = soil_agent.assess(
+        sample_weather_data
+    )
+
+    print_section(
+        "Soil Agent Assessment"
+    )
+
+    print(
+        json.dumps(
+            soil_output,
+            indent=2
+        )
+    )
+
+    # --------------------------------------
+    # Planner Agent
+    # --------------------------------------
+
+    planner_output = planner_agent.plan(
+        weather_output,
+        soil_output
+    )
+
+    print_section(
+        "Planner Agent Recommendation"
+    )
+
+    print(
+        json.dumps(
+            planner_output,
+            indent=2
+        )
+    )
+
+    # --------------------------------------
+    # LLM Orchestrator
+    # --------------------------------------
+
+    explanation = llm_orchestrator.explain(
+        weather_output,
+        soil_output,
+        planner_output
+    )
+
+    print_section(
+        "AI Decision Support Summary"
+    )
+
+    print(explanation)
+
+    print("\n" + "=" * 60)
+    print("MULTI-AGENT ANALYSIS COMPLETED")
+    print("=" * 60)
 
 
 if __name__ == "__main__":

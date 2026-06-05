@@ -1,4 +1,5 @@
 # src/utils/data_generator.py
+# this was for the initial structure of the project, but we ended up not using it in the final version.
 
 import numpy as np
 import pandas as pd

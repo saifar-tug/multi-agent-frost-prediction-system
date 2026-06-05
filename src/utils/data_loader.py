@@ -1,3 +1,5 @@
+# src/utils/data_loader.py
+# this was for the initial structure of the project, but we ended up not using it in the final version.
 import pandas as pd
 
 

@@ -1,39 +1,46 @@
+# src/agents/weather_agent.py
+import joblib
 import pandas as pd
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
 
 
 class WeatherAgent:
-    def __init__(self, dataset: pd.DataFrame):
-        self.model = LogisticRegression()
-        self.train_model(dataset)
 
-    def train_model(self, dataset: pd.DataFrame):
-        X = dataset[["TN_C"]]
-        y = dataset["target_frost"]
+    def __init__(self):
 
-        X_train, X_test, y_train, y_test = train_test_split(
-            X,
-            y,
-            test_size=0.2,
-            random_state=42,
-            shuffle=True
+        self.model = joblib.load(
+            "models/random_forest_frost_model.pkl"
         )
 
-        self.model.fit(X_train, y_train)
+        self.feature_columns = joblib.load(
+            "models/feature_columns.pkl"
+        )
 
-        y_pred = self.model.predict(X_test)
-        acc = accuracy_score(y_test, y_pred)
+    def predict(self, weather_data):
 
-        print(f"[WeatherAgent] 1-Day Ahead Frost Accuracy: {acc:.4f}")
+        input_df = pd.DataFrame([weather_data])
 
-    def predict_frost(self, temperature_today: float):
-        input_df = pd.DataFrame({"TN_C": [temperature_today]})
-        frost_prob = self.model.predict_proba(input_df)[0][1]
-        frost_prediction = self.model.predict(input_df)[0]
+        input_df = input_df[self.feature_columns]
+
+        frost_probability = (
+            self.model.predict_proba(input_df)[0][1]
+        )
+        '''
+        Every time the pipeline runs, the Random Forest predicts again.
+
+        But because the input row is the same each time, the output is also the same:
+        e.g., frost_probability = 0.843 and frost_prediction = 1
+        This is expected, since the model is deterministic given the same input.
+        The LLM Orchestrator will receive the same weather output each time, but it can still generate different reports based on the combined outputs from all agents.
+        '''
+
+        frost_prediction = int(
+            frost_probability >= 0.5
+        )
 
         return {
-            "frost_probability": float(frost_prob),
-            "frost_prediction": bool(frost_prediction)
+            "agent": "WeatherAgent",
+            "frost_probability": round(
+                float(frost_probability), 3
+            ),
+            "frost_prediction": frost_prediction
         }
