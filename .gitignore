@@ -1,7 +1,12 @@
-venv/
+.venv/
 __pycache__/
 *.pyc
 .env
 .DS_Store
-#data/raw/
-#data/processed/
+
+data/raw/
+data/processed/
+
+.vscode/
+
+models/
