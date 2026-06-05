@@ -279,3 +279,9 @@ Meteorological Observation
 ```
 
 This project demonstrates how machine learning, agent-based reasoning, and large language models can be combined to support frost-risk assessment and agricultural decision making.
+
+## Next Steps
+
+* Atomation of the Data collection (API or data scraping)
+* Automation of the Data Preprocessing
+* Refine the Agentic Architecture and Behaviour 
