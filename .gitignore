@@ -8,8 +8,8 @@ __pycache__/
 
 .vscode/
 
-data/raw/
+#data/raw/
 data/processed/
 
 models/
-*.pkl
+#*.pkl
