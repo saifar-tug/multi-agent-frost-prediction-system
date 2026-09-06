@@ -1,4 +1,5 @@
 # src/agents/weather_agent.py
+
 import joblib
 import pandas as pd
 
@@ -17,21 +18,36 @@ class WeatherAgent:
 
     def predict(self, weather_data):
 
-        input_df = pd.DataFrame([weather_data])
+        missing_features = [
+            feature
+            for feature in self.feature_columns
+            if feature not in weather_data
+        ]
 
-        input_df = input_df[self.feature_columns]
+        if missing_features:
+
+            raise ValueError(
+                "WeatherAgent received incomplete model input. "
+                f"Missing features: {missing_features}"
+            )
+
+        input_df = pd.DataFrame(
+            [weather_data]
+        )
+
+        input_df = input_df[
+            self.feature_columns
+        ]
 
         frost_probability = (
-            self.model.predict_proba(input_df)[0][1]
+            self.model.predict_proba(
+                input_df
+            )[0][1]
         )
-        '''
-        Every time the pipeline runs, the Random Forest predicts again.
 
-        But because the input row is the same each time, the output is also the same:
-        e.g., frost_probability = 0.843 and frost_prediction = 1
-        This is expected, since the model is deterministic given the same input.
-        The LLM Orchestrator will receive the same weather output each time, but it can still generate different reports based on the combined outputs from all agents.
-        '''
+        frost_probability = float(
+            frost_probability
+        )
 
         frost_prediction = int(
             frost_probability >= 0.5
@@ -39,8 +55,48 @@ class WeatherAgent:
 
         return {
             "agent": "WeatherAgent",
-            "frost_probability": round(
-                float(frost_probability), 3
-            ),
-            "frost_prediction": frost_prediction
+
+            "model_name":
+                "Random Forest Frost Prediction Model",
+
+            "training_data_source":
+                "GeoSphere Austria",
+
+            "operational_data_source":
+                weather_data.get(
+                    "data_source",
+                    "Unknown"
+                ),
+
+            "location":
+                weather_data.get(
+                    "location",
+                    "Unknown"
+                ),
+
+            "forecast_generated":
+                weather_data.get(
+                    "forecast_generated"
+                ),
+
+            "prediction_date":
+                weather_data.get(
+                    "prediction_date"
+                ),
+
+            "frost_probability":
+                round(
+                    frost_probability,
+                    3
+                ),
+
+            "frost_prediction":
+                frost_prediction,
+
+            "prediction_label":
+                (
+                    "FROST"
+                    if frost_prediction == 1
+                    else "NO FROST"
+                )
         }

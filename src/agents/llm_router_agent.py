@@ -1,169 +1,104 @@
-import json
-import re
-import requests
+# src/agents/llm_router_agent.py
+
+from __future__ import annotations
+
+from typing import Any
 
 
 class LLMRouterAgent:
+    """
+    Agent-selection policy for the frost decision-support system.
 
-    def __init__(
-        self,
-        model_name="llama3:latest",
-        ollama_url="http://localhost:11434/api/generate"
-    ):
+    Receives structured intent from QueryUnderstandingAgent and
+    deterministically decides which domain agents must run; it never
+    activates frost agents as a fallback for unknown or out-of-domain
+    questions.
+    """
 
-        self.model_name = model_name
-        self.ollama_url = ollama_url
+    INTENT_AGENT_MAP = {
+
+        "frost_prediction": [
+            "WeatherAgent",
+            "SoilAgent",
+        ],
+
+        "soil_assessment": [
+            "SoilAgent",
+        ],
+
+        "radiation_frost_assessment": [
+            "RadiationFrostAgent",
+        ],
+
+        "protection_decision": [
+            "WeatherAgent",
+            "SoilAgent",
+            "RadiationFrostAgent",
+            "PlannerAgent",
+        ],
+
+        "frost_explanation": [],
+
+        "greeting": [],
+
+        "acknowledgement": [],
+
+        "out_of_scope": [],
+
+        "unknown": [],
+    }
 
     def select_agents(
         self,
-        question: str
+        query_understanding: dict[str, Any],
     ) -> list[str]:
+        """
+        Select domain agents from structured query understanding.
 
-        prompt = f"""
-You are the routing agent of a Multi-Agent Frost Prediction and Decision Support System.
+        Parameters
+        ----------
+        query_understanding:
+            Output produced by QueryUnderstandingAgent.
 
-Available agents:
+        Returns
+        -------
+        list[str]
+            Ordered list of agents required for the current request.
+        """
 
-WeatherAgent
-- frost prediction
-- frost probability
-- weather forecast
+        domain = query_understanding.get(
+            "domain",
+            "unknown",
+        )
 
-SoilAgent
-- soil temperature
-- soil condition
-- crop vulnerability
+        intent = query_understanding.get(
+            "intent",
+            "unknown",
+        )
 
-RadiationFrostAgent
-- radiation frost assessment
-- cloud cover influence
-- wind influence
-- physical frost formation
+        if domain in {
+            "out_of_scope",
+            "unknown",
+        }:
 
-PlannerAgent
-- recommendations
-- protection measures
-- operational decisions
+            return []
 
-Routing Rules:
+        if domain == "general_conversation":
 
-1. Soil-related questions:
-["SoilAgent"]
+            return []
 
-2. Frost prediction questions:
-["WeatherAgent","SoilAgent"]
+        # Only frost-domain requests may activate frost-analysis agents
+        if domain != "frost":
 
-3. Action or recommendation questions:
-["WeatherAgent","SoilAgent","RadiationFrostAgent","PlannerAgent"]
+            return []
 
-Return ONLY valid JSON.
-
-Example:
-
-{{"agents":["SoilAgent"]}}
-
-Question:
-{question}
-"""
-
-        try:
-
-            response = requests.post(
-                self.ollama_url,
-                json={
-                    "model": self.model_name,
-                    "prompt": prompt,
-                    "stream": False,
-                    "temperature": 0
-                },
-                timeout=60
+        required_agents = (
+            self.INTENT_AGENT_MAP.get(
+                intent,
+                [],
             )
+        )
 
-            response.raise_for_status()
-
-            llm_response = response.json()["response"]
-
-            json_match = re.search(
-                r"\{[\s\S]*\}",
-                llm_response
-            )
-
-            if not json_match:
-
-                raise ValueError(
-                    "No JSON found in router output."
-                )
-
-            parsed = json.loads(
-                json_match.group()
-            )
-
-            agents = parsed.get(
-                "agents",
-                []
-            )
-
-            # --------------------------------------------------
-            # Architecture Enforcement Rules
-            # --------------------------------------------------
-
-            question_lower = question.lower()
-
-            # Frost prediction should use both
-            # WeatherAgent and SoilAgent
-
-            if any(
-                keyword in question_lower
-                for keyword in [
-                    "frost",
-                    "forecast",
-                    "tomorrow",
-                    "tonight",
-                    "weather",
-                    "temperature"
-                ]
-            ):
-
-                if "WeatherAgent" not in agents:
-
-                    agents.append(
-                        "WeatherAgent"
-                    )
-
-                if "SoilAgent" not in agents:
-
-                    agents.append(
-                        "SoilAgent"
-                    )
-
-            # Planner requires all upstream agents
-
-            if "PlannerAgent" in agents:
-
-                agents = [
-                    "WeatherAgent",
-                    "SoilAgent",
-                    "RadiationFrostAgent",
-                    "PlannerAgent"
-                ]
-
-            # Remove duplicates while preserving order
-
-            agents = list(
-                dict.fromkeys(
-                    agents
-                )
-            )
-
-            return agents
-
-        except Exception as e:
-
-            print(
-                f"\nRouter fallback activated: {e}"
-            )
-
-            return [
-                "WeatherAgent",
-                "SoilAgent"
-            ]
+        return list(
+            required_agents
+        )

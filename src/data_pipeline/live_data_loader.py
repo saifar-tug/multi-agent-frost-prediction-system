@@ -1,218 +1,425 @@
 # src/data_pipeline/live_data_loader.py
 
-from datetime import datetime
-from datetime import timedelta
+"""
+Live Open-Meteo data loader for operational frost prediction.
 
-import requests
+Retrieves the hourly Open-Meteo forecast, validates it, selects
+tomorrow's local calendar day, and hands that day to
+``data_pipeline.feature_mapper`` for translation into the trained
+model's feature schema plus operational metadata. Kept separate from
+feature_mapper because the model was trained on GeoSphere Austria
+station observations while operational prediction runs on Open-Meteo
+forecast variables.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+from typing import Any
+
 import pandas as pd
+import requests
 
+from src.data_pipeline.feature_mapper import (
+    build_model_features,
+    build_radiation_features,
+)
+
+API_URL = (
+    "https://api.open-meteo.com/v1/forecast"
+)
 
 LATITUDE = 47.08
 LONGITUDE = 15.44
 
 LOCATION_NAME = "Graz, Austria"
 
+TIMEZONE = "Europe/Vienna"
 
-def load_live_weather():
+REQUEST_TIMEOUT_SECONDS = 30
 
-    url = (
-        "https://api.open-meteo.com/v1/forecast"
-    )
+
+HOURLY_VARIABLES = [
+    "temperature_2m",
+    "relative_humidity_2m",
+    "dew_point_2m",
+    "surface_pressure",
+    "cloud_cover",
+    "visibility",
+    "precipitation",
+    "wind_gusts_10m",
+    "wind_speed_10m",
+    "soil_temperature_0cm",
+]
+
+REQUIRED_COLUMNS = [
+    "time",
+    *HOURLY_VARIABLES,
+]
+
+
+class LiveWeatherDataError(
+    RuntimeError
+):
+    """
+    Raised when live forecast data cannot be retrieved,
+    validated, or transformed.
+    """
+
+
+def _validate_hourly_dataframe(
+    df: pd.DataFrame,
+) -> None:
+    """
+    Validate that all Open-Meteo variables required by the operational
+    feature pipeline are available.
+    """
+
+    missing_columns = [
+        column
+        for column in REQUIRED_COLUMNS
+        if column not in df.columns
+    ]
+
+    if missing_columns:
+
+        raise LiveWeatherDataError(
+            "Open-Meteo response is missing required "
+            "hourly variables: "
+            + ", ".join(missing_columns)
+        )
+
+    if df.empty:
+
+        raise LiveWeatherDataError(
+            "Open-Meteo returned an empty hourly forecast."
+        )
+
+
+def load_live_weather() -> pd.DataFrame:
+    """
+    Retrieve hourly Open-Meteo forecast data.
+
+    Two forecast days are requested because the operational model
+    evaluates tomorrow rather than the current calendar day.
+
+    Explicit units:
+
+    temperature: °C
+    wind speed: km/h
+    precipitation: mm
+
+    Unit conversion required for model compatibility is performed
+    later by feature_mapper.py.
+    """
 
     params = {
 
-        "latitude": LATITUDE,
+        "latitude":
+            LATITUDE,
 
-        "longitude": LONGITUDE,
+        "longitude":
+            LONGITUDE,
 
-        "hourly": ",".join([
-            "temperature_2m",
-            "relative_humidity_2m",
-            "dew_point_2m",
-            "surface_pressure",
-            "cloud_cover",
-            "visibility",
-            "precipitation",
-            "wind_gusts_10m",
-            "wind_speed_10m"
-        ]),
+        "hourly":
+            ",".join(
+                HOURLY_VARIABLES
+            ),
 
-        "forecast_days": 1
+        "forecast_days":
+            2,
+
+        "timezone":
+            TIMEZONE,
+
+        "temperature_unit":
+            "celsius",
+
+        "wind_speed_unit":
+            "kmh",
+
+        "precipitation_unit":
+            "mm",
     }
 
-    response = requests.get(
-        url,
-        params=params,
-        timeout=30
-    )
+    try:
 
-    response.raise_for_status()
+        response = requests.get(
+            API_URL,
+            params=params,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
 
-    data = response.json()
+        response.raise_for_status()
+
+    except requests.RequestException as exc:
+
+        raise LiveWeatherDataError(
+            "Unable to retrieve live weather data "
+            f"from Open-Meteo: {exc}"
+        ) from exc
+
+    try:
+
+        payload: dict[str, Any] = (
+            response.json()
+        )
+
+    except ValueError as exc:
+
+        raise LiveWeatherDataError(
+            "Open-Meteo returned an invalid JSON response."
+        ) from exc
+
+    if "hourly" not in payload:
+
+        reason = payload.get(
+            "reason",
+            "No hourly forecast was returned.",
+        )
+
+        raise LiveWeatherDataError(
+            "Invalid Open-Meteo response: "
+            f"{reason}"
+        )
 
     hourly = pd.DataFrame(
-        data["hourly"]
+        payload["hourly"]
     )
+
+    _validate_hourly_dataframe(
+        hourly
+    )
+
+    hourly["time"] = pd.to_datetime(
+        hourly["time"],
+        errors="coerce",
+    )
+
+    if hourly["time"].isna().any():
+
+        raise LiveWeatherDataError(
+            "One or more Open-Meteo timestamps "
+            "could not be parsed."
+        )
+
+    for column in HOURLY_VARIABLES:
+
+        hourly[column] = pd.to_numeric(
+            hourly[column],
+            errors="coerce",
+        )
+
+    missing_values = (
+        hourly[
+            HOURLY_VARIABLES
+        ]
+        .isna()
+        .sum()
+    )
+
+    invalid_columns = (
+        missing_values[
+            missing_values > 0
+        ]
+    )
+
+    if not invalid_columns.empty:
+
+        details = ", ".join(
+            f"{column}={count}"
+            for column, count
+            in invalid_columns.items()
+        )
+
+        raise LiveWeatherDataError(
+            "Open-Meteo returned missing or "
+            "non-numeric values: "
+            + details
+        )
 
     return hourly
 
 
-def build_feature_row():
+def _select_prediction_day(
+    hourly: pd.DataFrame,
+    prediction_date: str,
+) -> pd.DataFrame:
+    """
+    Select exactly the hourly forecast records belonging to the
+    requested local prediction date.
+    """
 
-    df = load_live_weather()
+    selected = hourly[
+        hourly["time"]
+        .dt.strftime("%Y-%m-%d")
+        == prediction_date
+    ].copy()
 
-    now = datetime.now()
+    if selected.empty:
 
-    prediction_date = (
-        now + timedelta(days=1)
-    ).strftime("%Y-%m-%d")
+        raise LiveWeatherDataError(
+            "No hourly forecast was found for "
+            f"{prediction_date}."
+        )
 
-    generated_at = now.strftime(
-        "%Y-%m-%d %H:%M"
+    if len(selected) != 24:
+
+        raise LiveWeatherDataError(
+            "Expected 24 hourly records for "
+            f"{prediction_date}, but received "
+            f"{len(selected)}."
+        )
+
+    return selected.reset_index(
+        drop=True
     )
 
-    row = {
 
-        # -------------------------
-        # Model Features
-        # -------------------------
+def build_feature_row() -> dict[str, Any]:
+    """
+    Build the complete operational feature row for tomorrow.
 
-        "temp_min":
-            df["temperature_2m"].min(),
+    The returned dictionary contains:
 
-        "temp_max":
-            df["temperature_2m"].max(),
+    - Random Forest model features
+    - RadiationFrostAgent features
+    - forecast metadata
+    - feature-mapping metadata
 
-        "temp_mean":
-            df["temperature_2m"].mean(),
+    The GeoSphere/Open-Meteo transformations themselves are performed
+    by feature_mapper.py.
+    """
 
-        "soil_temp_min":
-            df["temperature_2m"].min(),
+    hourly = load_live_weather()
 
-        "humidity_mean":
-            df["relative_humidity_2m"].mean(),
+    now_local = (
+        datetime.now()
+        .astimezone()
+    )
 
-        "vapor_pressure_mean":
-            df["dew_point_2m"].mean(),
+    prediction_date = (
+        now_local.date()
+        + timedelta(days=1)
+    ).isoformat()
 
-        "pressure_mean":
-            df["surface_pressure"].mean(),
+    forecast = _select_prediction_day(
+        hourly=hourly,
+        prediction_date=prediction_date,
+    )
 
-        "cloud_morning":
-            df["cloud_cover"][:12].mean(),
+    try:
 
-        "cloud_afternoon":
-            df["cloud_cover"][12:].mean(),
+        model_features = (
+            build_model_features(
+                forecast
+            )
+        )
 
-        "precipitation":
-            df["precipitation"].sum(),
+        radiation_features = (
+            build_radiation_features(
+                forecast
+            )
+        )
 
-        "visibility_morning":
-            df["visibility"][:12].mean(),
+    except (KeyError, ValueError) as exc:
 
-        "visibility_afternoon":
-            df["visibility"][12:].mean(),
+        raise LiveWeatherDataError(
+            "Unable to transform Open-Meteo forecast "
+            f"into operational model features: {exc}"
+        ) from exc
 
-        "dew":
-            int(
-                df["dew_point_2m"].mean() > 0
-            ),
+    row: dict[str, Any] = {}
 
-        "fog":
-            int(
-                df["visibility"].mean() < 1000
-            ),
+    row.update(
+        model_features
+    )
 
-        "wind_bft6":
-            int(
-                df["wind_speed_10m"].max() >= 39
-            ),
+    row.update(
+        radiation_features
+    )
 
-        "wind_bft8":
-            int(
-                df["wind_speed_10m"].max() >= 62
-            ),
+    row.update(
+        {
+            "location":
+                LOCATION_NAME,
 
-        "max_wind_gust":
-            df["wind_gusts_10m"].max(),
+            "latitude":
+                LATITUDE,
 
-        # -------------------------
-        # Radiation Frost Features
-        # -------------------------
+            "longitude":
+                LONGITUDE,
 
-        "radiation_temp_min":
-            df["temperature_2m"].min(),
+            "timezone":
+                TIMEZONE,
 
-        "radiation_wind_speed":
-            df["wind_speed_10m"].mean(),
+            "forecast_generated":
+                now_local.strftime(
+                    "%Y-%m-%d %H:%M %Z"
+                ),
 
-        "radiation_wind_gust":
-            df["wind_gusts_10m"].max(),
+            "prediction_date":
+                prediction_date,
 
-        "radiation_cloud_cover":
-            df["cloud_cover"].mean(),
+            "forecast_window_start":
+                forecast[
+                    "time"
+                ].min().isoformat(),
 
-        # -------------------------
-        # Metadata
-        # -------------------------
+            "forecast_window_end":
+                forecast[
+                    "time"
+                ].max().isoformat(),
 
-        "location":
-            LOCATION_NAME,
+            "hourly_records_used":
+                int(
+                    len(forecast)
+                ),
 
-        "forecast_generated":
-            generated_at,
+            "data_source":
+                "Open-Meteo Forecast API",
 
-        "prediction_date":
-            prediction_date,
+            "training_data_source":
+                (
+                    "GeoSphere Austria "
+                    "(Graz Universität Station)"
+                ),
 
-        "data_source":
-            "Open-Meteo API"
-    }
+            "model_type":
+                (
+                    "Random Forest Frost "
+                    "Prediction Model"
+                ),
+
+            "feature_schema":
+                (
+                    "GeoSphere-trained model schema "
+                    "with explicit Open-Meteo "
+                    "operational mappings"
+                ),
+
+            "feature_mapping_contains_proxies":
+                True,
+        }
+    )
 
     return row
 
 
 if __name__ == "__main__":
 
-    feature_row = build_feature_row()
+    try:
 
-    print("\n" + "=" * 60)
-    print("LIVE WEATHER DATA")
-    print("=" * 60)
+        feature_row = (
+            build_feature_row()
+        )
 
-    print(
-        f"Location: "
-        f"{feature_row['location']}"
-    )
+        print(feature_row)
 
-    print(
-        f"Data Source: "
-        f"{feature_row['data_source']}"
-    )
+    except LiveWeatherDataError as exc:
 
-    print(
-        f"Forecast Generated: "
-        f"{feature_row['forecast_generated']}"
-    )
+        print(f"Live weather data error: {exc}")
 
-    print(
-        f"Prediction Date: "
-        f"{feature_row['prediction_date']}"
-    )
-
-    print("\nMODEL FEATURES\n")
-
-    excluded = {
-        "location",
-        "forecast_generated",
-        "prediction_date",
-        "data_source"
-    }
-
-    for key, value in feature_row.items():
-
-        if key not in excluded:
-
-            print(
-                f"{key}: {value}"
-            )
+        raise SystemExit(
+            1
+        ) from exc

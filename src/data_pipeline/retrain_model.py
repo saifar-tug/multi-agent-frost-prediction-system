@@ -5,9 +5,9 @@ import joblib
 
 from sklearn.ensemble import RandomForestClassifier
 
-from preprocess_data import (
+from src.data_pipeline.preprocess_data import (
     load_and_preprocess,
-    FEATURE_COLUMNS
+    FEATURE_COLUMNS,
 )
 
 
@@ -54,47 +54,19 @@ def main():
 
     print("\nSaving model artifacts...")
 
-    joblib.dump(
-        rf_model,
-        MODEL_DIR /
-        "random_forest_frost_model.pkl"
-    )
+    artifacts = {
+        MODEL_DIR / "random_forest_frost_model.pkl": rf_model,
+        MODEL_DIR / "feature_columns.pkl": FEATURE_COLUMNS,
+        MODEL_DIR / "sample_row_recent.pkl": X.iloc[-1].to_dict(),
+        MODEL_DIR / "sample_row_frost.pkl": X[y == 1].iloc[0].to_dict(),
+    }
 
-    joblib.dump(
-        FEATURE_COLUMNS,
-        MODEL_DIR /
-        "feature_columns.pkl"
-    )
-
-    joblib.dump(
-        X.iloc[-1].to_dict(),
-        MODEL_DIR /
-        "sample_row_recent.pkl"
-    )
-
-    joblib.dump(
-        X[y == 1].iloc[0].to_dict(),
-        MODEL_DIR /
-        "sample_row_frost.pkl"
-    )
+    for path, artifact in artifacts.items():
+        joblib.dump(artifact, path)
 
     print("\nSaved:")
-    print(
-        MODEL_DIR /
-        "random_forest_frost_model.pkl"
-    )
-    print(
-        MODEL_DIR /
-        "feature_columns.pkl"
-    )
-    print(
-        MODEL_DIR /
-        "sample_row_recent.pkl"
-    )
-    print(
-        MODEL_DIR /
-        "sample_row_frost.pkl"
-    )
+    for path in artifacts:
+        print(path)
 
     print("\n" + "=" * 60)
     print("RETRAINING COMPLETED SUCCESSFULLY")

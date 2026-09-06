@@ -2,26 +2,12 @@
 
 import pandas as pd
 
+from src.data_pipeline.feature_mapper import MODEL_FEATURES
 
-FEATURE_COLUMNS = [
-    "temp_min",
-    "temp_max",
-    "temp_mean",
-    "soil_temp_min",
-    "humidity_mean",
-    "vapor_pressure_mean",
-    "pressure_mean",
-    "cloud_morning",
-    "cloud_afternoon",
-    "precipitation",
-    "visibility_morning",
-    "visibility_afternoon",
-    "dew",
-    "fog",
-    "wind_bft6",
-    "wind_bft8",
-    "max_wind_gust"
-]
+# Single source of truth for the trained model's feature schema lives
+# in feature_mapper.MODEL_FEATURES; kept under this name here since
+# it's the name training/retraining code expects.
+FEATURE_COLUMNS = MODEL_FEATURES
 
 
 RENAME_MAP = {
@@ -31,7 +17,7 @@ RENAME_MAP = {
     "tlmax": "temp_max",
     "tl_mittel": "temp_mean",
 
-    "tsmin": "soil_temp_min",
+    "tsmin": "near_ground_temp_min",
 
     "rf_mittel": "humidity_mean",
 
@@ -39,8 +25,8 @@ RENAME_MAP = {
 
     "p_mittel": "pressure_mean",
 
-    "bewd_i": "cloud_morning",
-    "bewd_ii": "cloud_afternoon",
+    "bewm_i": "cloud_morning",
+    "bewm_ii": "cloud_afternoon",
 
     "rr": "precipitation",
 

@@ -1,16 +1,20 @@
 # src/agents/soil_agent.py
+
 class SoilAgent:
 
     def assess(self, weather_data):
 
-        soil_temp = weather_data.get("soil_temp_min")
+        soil_temp = weather_data.get(
+            "radiation_soil_temp_min"
+        )
 
         if soil_temp is None:
 
             risk = "unknown"
 
             explanation = (
-                "No soil temperature available."
+                "Open-Meteo soil-surface temperature data "
+                "is not available for this forecast."
             )
 
         elif soil_temp <= 0:
@@ -18,7 +22,8 @@ class SoilAgent:
             risk = "high"
 
             explanation = (
-                "Minimum soil temperature is below freezing."
+                "The forecast minimum soil-surface temperature "
+                "at 0 cm is at or below freezing."
             )
 
         elif soil_temp <= 2:
@@ -26,7 +31,8 @@ class SoilAgent:
             risk = "medium"
 
             explanation = (
-                "Minimum soil temperature is close to freezing."
+                "The forecast minimum soil-surface temperature "
+                "at 0 cm is close to freezing."
             )
 
         else:
@@ -34,12 +40,16 @@ class SoilAgent:
             risk = "low"
 
             explanation = (
-                "Minimum soil temperature is above freezing."
+                "The forecast minimum soil-surface temperature "
+                "at 0 cm remains above freezing."
             )
 
         return {
             "agent": "SoilAgent",
+
             "soil_temperature": soil_temp,
+
             "soil_risk": risk,
+
             "explanation": explanation
         }
