@@ -463,7 +463,7 @@ We also acknowledge to the data sources:
 
 **Dr. Lucas Iacono**
 
-- Research Area Manager Data Management for AI
+- Research Area Manager - Data Management for AI
 - Know Center Research GmbH
 
 ---
